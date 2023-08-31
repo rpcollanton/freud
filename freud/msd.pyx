@@ -51,16 +51,20 @@ except ImportError:
         logger.info("Using NumPy for FFTs")
 
 
+def _crosscorrelation(x,y):
+    r"""Compute the cross-correlation of two sequences."""
+    if y.shape[0]!=x.shape[0]:
+        raise ValueError("Inputs to cross-correlation must match in shape.")
+    N = x.shape[0]
+    X = fft(x, n=2*N, axis=0)
+    Y = fft(y, n=2*N, axis=0)
+    res = ifft(X.conjugate() * Y, axis=0)
+    res = (res[:N]).real
+    return res
+
 def _autocorrelation(x):
     r"""Compute the autocorrelation of a sequence"""
-    N = x.shape[0]
-    F = fft(x, n=2*N, axis=0)
-    PSD = F * F.conjugate()
-    res = ifft(PSD, axis=0)
-    res = (res[:N]).real
-    n = np.arange(1, N+1)[::-1]  # N to 1
-    return res/n[:, np.newaxis]
-
+    return _crosscorrelation(x,x)
 
 cdef class MSD(_Compute):
     r"""Compute the mean squared displacement.
@@ -143,6 +147,7 @@ cdef class MSD(_Compute):
     """   # noqa: E501
     cdef freud.box.Box _box
     cdef _particle_msd
+    cdef _particle_msd_variance 
     cdef str mode
 
     def __cinit__(self, box=None, mode='window'):
@@ -152,12 +157,13 @@ cdef class MSD(_Compute):
             self._box = None
 
         self._particle_msd = []
+        self._particle_msd_variance = []
 
         if mode not in ['window', 'direct']:
             raise ValueError("Invalid mode")
         self.mode = mode
 
-    def compute(self, positions, images=None, reset=True):
+    def compute(self, positions, images=None, reset=True, variance=False):
         """Calculate the MSD for the positions provided.
 
         .. note::
@@ -189,6 +195,7 @@ cdef class MSD(_Compute):
         """  # noqa: E501
         if reset:
             self._particle_msd = []
+            self._particle_msd_variance = []
 
         self._called_compute = True
 
@@ -207,10 +214,10 @@ cdef class MSD(_Compute):
             positions = unwrapped_positions
 
         if self.mode == 'window':
-            # First compute the first term r^2(k+m) - r^2(k)
+            # First compute the first term r^2(k+m) + r^2(k)
             N = positions.shape[0]
-            D = np.square(positions).sum(axis=2)
-            D = np.append(D, np.zeros(positions.shape[:2]), axis=0)
+            r2 = np.square(positions).sum(axis=2)
+            D = np.append(r2, np.zeros(positions.shape[:2]), axis=0)
             Q = 2*D.sum(axis=0)
             S1 = np.zeros(positions.shape[:2])
             for m in range(N):
@@ -218,12 +225,50 @@ cdef class MSD(_Compute):
                 S1[m, :] = Q/(N-m)
 
             # The second term can be computed via autocorrelation
+            n = np.arange(1, N+1)[::-1][:, np.newaxis]  # N to 1
             corrs = []
             for i in range(positions.shape[2]):
-                corrs.append(_autocorrelation(positions[:, :, i]))
+                corrs.append(_autocorrelation(positions[:, :, i])/n)
             S2 = np.sum(corrs, axis=0)
 
             self._particle_msd.append(S1 - 2*S2)
+
+            # Compute variance
+            if variance:
+                r3 = r2.reshape(-1,1,1)*positions
+                r4 = r2*r2
+                D4 = np.append(r4, np.zeros(positions.shape[:2]), axis=0)
+                Q = 2*D4.sum(axis=0)
+                sum_self = np.zeros(positions.shape[:2])
+                for m in range(N):
+                    Q -= (D4[m-1, :] + D4[N-m, :])
+                    sum_self[m, :] = Q/(N-m)
+                
+                sum_auto = _autocorrelation(r2)/n
+                crosscorrs1 = []
+                crosscorrs2 = []
+                for i in range(positions.shape[2]):
+                    crosscorrs1.append(_crosscorrelation(positions[:,:,i], r3[:,:,i])/n)
+                    crosscorrs2.append(_crosscorrelation(r3[:,:,i], positions[:,:,i])/n)
+                sum_cross1 = np.sum(crosscorrs1, axis=0)
+                sum_cross2 = np.sum(crosscorrs2, axis=0)
+
+                # now, the tricky squared dot product!
+                squaredotcorrs = []
+                for i in range(positions.shape[2]):
+                    for j in range(positions.shape[2]):
+                        squaredotcorrs.append(_autocorrelation(positions[:,:,i]*positions[:,:,j])/n)
+                sum_squaredot = np.sum(squaredotcorrs, axis=0)
+
+                print("msd self:", sum_self[:5])
+                print("msd auto:", sum_auto[:5])
+                print("msd squaredot:", sum_squaredot[:5])
+                print("msd cross1:", sum_cross1[:5])
+                print("msd cross2:", sum_cross2[:5])
+                print((sum_self + 2*sum_auto + 4*sum_squaredot - 4*sum_cross1 - 4*sum_cross2)[:10])           
+                self._particle_msd_variance.append(sum_self + 2*sum_auto + 4*sum_squaredot - 4*sum_cross1 - 4*sum_cross2 - np.square(S1-2*S2))
+                
+
         elif self.mode == 'direct':
             self._particle_msd.append(
                 np.linalg.norm(
@@ -241,6 +286,15 @@ cdef class MSD(_Compute):
         """:math:`\\left(N_{frames}, \\right)` :class:`numpy.ndarray`: The mean
         squared displacement."""
         return np.concatenate(self._particle_msd, axis=1).mean(axis=-1)
+
+    @_Compute._computed_property
+    def msd_variance(self):
+        """:math:`\\left(N_{frames}, \\right)` :class:`numpy.ndarray`: The variance of
+        squared displacement."""
+        # We have variance for each particle for each window width
+        # We now need to compute a total variance for each window width. 
+        # Because each of these contain the same number of samples, we can just average it!
+        return np.concatenate(self._particle_msd_variance, axis=1).mean(axis=-1)
 
     @_Compute._computed_property
     def particle_msd(self):
