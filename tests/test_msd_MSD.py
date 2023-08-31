@@ -60,7 +60,7 @@ class TestMSD:
         def simple_msd(positions):
             """A naive MSD calculation, used to test."""
             msds = []
-
+            variances = []
             for m in np.arange(positions.shape[0]):
                 if m:
                     diffs = positions[:-m, :, :] - positions[m:, :, :]
@@ -68,18 +68,22 @@ class TestMSD:
                     diffs = np.zeros_like(positions)
                 sqdist = np.square(diffs).sum(axis=2)
                 msds.append(sqdist.mean(axis=0))
+                variances.append(sqdist.var(axis=0))
 
-            return np.array(msds).mean(axis=1), np.array(msds)
+            return np.array(msds).mean(axis=1), np.array(msds), np.array(variances).mean(axis=1), np.array(variances)
 
         num_tests = 5
         np.random.seed(10)
         for _ in range(num_tests):
             positions = np.random.rand(10, 10, 3)
-            simple, simple_particle = simple_msd(positions)
-            solution = msd.compute(positions).msd
-            solution_particle = msd.compute(positions).particle_msd
-            npt.assert_allclose(solution, simple, atol=1e-6)
-            npt.assert_allclose(solution_particle, simple_particle, atol=1e-5)
+            simple, simple_particle, simple_var, simple_var_particle = simple_msd(positions)
+            msd.compute(positions, variance=True)
+            solution = msd.msd
+            solution_var = msd.msd_variance
+            solution_particle = msd.particle_msd
+            npt.assert_allclose(solution, simple, atol=1e-7)
+            npt.assert_allclose(solution_particle, simple_particle, atol=1e-7)
+            npt.assert_allclose(solution_var, simple_var, atol=1e-7)
 
     def test_repr(self):
         msd = freud.msd.MSD()

@@ -32,13 +32,13 @@ try:
     # of the numpy/scipy API that are actually used below. There is no promise
     # that other aspects of the API will be preserved.
     def fft(x, n, axis):
-        a = pyfftw.empty_aligned(x.shape, 'complex64')
+        a = pyfftw.empty_aligned(x.shape, 'complex128')
         a[:] = x
         fft_object = pyfftw.builders.fft(a, n=n, axis=axis)
         return fft_object()
 
     def ifft(x, axis):
-        a = pyfftw.empty_aligned(x.shape, 'complex64')
+        a = pyfftw.empty_aligned(x.shape, 'complex128')
         a[:] = x
         fft_object = pyfftw.builders.ifft(a, axis=axis)
         return fft_object()
@@ -205,7 +205,6 @@ cdef class MSD(_Compute):
             images = freud.util._convert_array(
                 images, shape=positions.shape, dtype=np.int32)
 
-        print(positions.dtype)
         # Make sure we aren't modifying the provided array
         if self._box is not None and images is not None:
             unwrapped_positions = positions.copy()
@@ -220,7 +219,7 @@ cdef class MSD(_Compute):
             r2 = np.square(positions).sum(axis=2)
             D = np.append(r2, np.zeros(positions.shape[:2]), axis=0)
             Q = 2*D.sum(axis=0)
-            S1 = np.zeros(positions.shape[:2])
+            S1 = np.zeros(positions.shape[:2], dtype=np.longdouble)
             for m in range(N):
                 Q -= (D[m-1, :] + D[N-m, :])
                 S1[m, :] = Q/(N-m)
@@ -236,15 +235,16 @@ cdef class MSD(_Compute):
 
             # Compute variance
             if variance:
-                r3 = r2.reshape(-1,1,1)*positions
+
+                r3 = r2[:,:,np.newaxis]*positions
                 r4 = r2*r2
-                D4 = np.append(r4, np.zeros(positions.shape[:2]), axis=0)
+                D4 = np.append(r4, np.zeros(positions.shape[:2]), axis=0) # pad with zeros
                 Q = 2*D4.sum(axis=0)
-                sum_self = np.zeros(positions.shape[:2])
+                sum_self = np.zeros(positions.shape[:2], dtype=np.longdouble)
                 for m in range(N):
                     Q -= (D4[m-1, :] + D4[N-m, :])
                     sum_self[m, :] = Q/(N-m)
-                
+
                 sum_auto = _autocorrelation(r2)/n
                 crosscorrs1 = []
                 crosscorrs2 = []
@@ -260,14 +260,7 @@ cdef class MSD(_Compute):
                     for j in range(positions.shape[2]):
                         squaredotcorrs.append(_autocorrelation(positions[:,:,i]*positions[:,:,j])/n)
                 sum_squaredot = np.sum(squaredotcorrs, axis=0)
-
-#                print("msd self:", sum_self[:5])
-#                print("msd auto:", sum_auto[:5])
-#                print("msd squaredot:", sum_squaredot[:5])
-#                print("msd cross1:", sum_cross1[:5])
-#                print("msd cross2:", sum_cross2[:5])
-#                print((sum_self + 2*sum_auto + 4*sum_squaredot - 4*sum_cross1 - 4*sum_cross2)[:5])
-#                print(sum_self.dtype)
+                
                 self._particle_msd_variance.append(sum_self + 2*sum_auto + 4*sum_squaredot - 4*sum_cross1 - 4*sum_cross2 - np.square(S1-2*S2))
                 
 
