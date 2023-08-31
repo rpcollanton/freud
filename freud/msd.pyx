@@ -200,11 +200,12 @@ cdef class MSD(_Compute):
         self._called_compute = True
 
         positions = freud.util._convert_array(
-            positions, shape=(None, None, 3))
+            positions, shape=(None, None, 3), dtype=np.longdouble)
         if images is not None:
             images = freud.util._convert_array(
                 images, shape=positions.shape, dtype=np.int32)
 
+        print(positions.dtype)
         # Make sure we aren't modifying the provided array
         if self._box is not None and images is not None:
             unwrapped_positions = positions.copy()
@@ -260,12 +261,13 @@ cdef class MSD(_Compute):
                         squaredotcorrs.append(_autocorrelation(positions[:,:,i]*positions[:,:,j])/n)
                 sum_squaredot = np.sum(squaredotcorrs, axis=0)
 
-                print("msd self:", sum_self[:5])
-                print("msd auto:", sum_auto[:5])
-                print("msd squaredot:", sum_squaredot[:5])
-                print("msd cross1:", sum_cross1[:5])
-                print("msd cross2:", sum_cross2[:5])
-                print((sum_self + 2*sum_auto + 4*sum_squaredot - 4*sum_cross1 - 4*sum_cross2)[:10])           
+#                print("msd self:", sum_self[:5])
+#                print("msd auto:", sum_auto[:5])
+#                print("msd squaredot:", sum_squaredot[:5])
+#                print("msd cross1:", sum_cross1[:5])
+#                print("msd cross2:", sum_cross2[:5])
+#                print((sum_self + 2*sum_auto + 4*sum_squaredot - 4*sum_cross1 - 4*sum_cross2)[:5])
+#                print(sum_self.dtype)
                 self._particle_msd_variance.append(sum_self + 2*sum_auto + 4*sum_squaredot - 4*sum_cross1 - 4*sum_cross2 - np.square(S1-2*S2))
                 
 
